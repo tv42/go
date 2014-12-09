@@ -237,62 +237,15 @@ chomp(Buf *b)
 		b->len--;
 }
 
-static char*
-branchtag(char *branch, bool *precise)
-{
-	char *tag, *p, *q;
-	int i;
-	Buf b, arg;
-	Vec tags;
-
-	binit(&b);
-	binit(&arg);
-	vinit(&tags);
-
-	bprintf(&arg, "master..%s", branch);
-	run(&b, goroot, CheckExit, "git", "log", "--decorate=full", "--format=format:%d", bstr(&arg), nil);
-
-	splitlines(&tags, bstr(&b));
-	tag = branch;
-	for(i=0; i < tags.len; i++) {
-		// Each line is either blank, or looks like
-		//	  (tag: refs/tags/go1.4rc2, refs/remotes/origin/release-branch.go1.4, refs/heads/release-branch.go1.4)
-		// We need to find an element starting with refs/tags/.
-		p = xstrstr(tags.p[i], " refs/tags/");
-		if(p == nil)
-			continue;
-		p += xstrlen(" refs/tags/");
-		// The tag name ends at a comma or paren (prefer the first).
-		q = xstrstr(p, ",");
-		if(q == nil)
-			q = xstrstr(p, ")");
-		if(q == nil)
-			continue;  // malformed line; ignore it
-		*q = '\0';
-		tag = xstrdup(p);
-		if(i == 0)
-			*precise = 1;  // tag denotes HEAD
-		break;
-	}
-
-	bfree(&b);
-	bfree(&arg);
-	vfree(&tags);
-	return tag;
-}
-
 // findgoversion determines the Go version to use in the version string.
 static char*
 findgoversion(void)
 {
-	char *tag, *p;
-	bool precise;
-	Buf b, path, bmore, branch;
+	char *p;
+	Buf b, path;
 
 	binit(&b);
 	binit(&path);
-	binit(&bmore);
-	binit(&branch);
 
 	// The $GOROOT/VERSION file takes priority, for distributions
 	// without the source repo.
@@ -318,27 +271,8 @@ findgoversion(void)
 		goto done;
 	}
 
-	// Otherwise, use Git.
-	// What is the current branch?
-	run(&branch, goroot, CheckExit, "git", "rev-parse", "--abbrev-ref", "HEAD", nil);
-	chomp(&branch);
-
-	// What are the tags along the current branch?
-	tag = "devel";
-	precise = 0;
-
-	// If we're on a release branch, use the closest matching tag
-	// that is on the release branch (and not on the master branch).
-	if(hasprefix(bstr(&branch), "release-branch."))
-		tag = branchtag(bstr(&branch), &precise);
-
-	bprintf(&b, "%s", tag);
-	if(!precise) {
-		// Tag does not point at HEAD; add hash and date to version.
-		run(&bmore, goroot, CheckExit, "git", "log", "-n", "1", "--format=format: +%h %cd", "HEAD", nil);
-		chomp(&bmore);
-		bwriteb(&b, &bmore);
-	}
+	run(&b, goroot, CheckExit, "git", "describe", "--tags", "--match", "go[0-9]*", "HEAD", nil);
+	chomp(&b);
 
 	// Cache version.
 	writefile(&b, bstr(&path), 0);
@@ -349,8 +283,6 @@ done:
 
 	bfree(&b);
 	bfree(&path);
-	bfree(&bmore);
-	bfree(&branch);
 
 	return p;
 }
